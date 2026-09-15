@@ -1,81 +1,102 @@
-export interface User {
-  id: string
-  email: string
-  pseudo: string
-  role: 'coach' | 'igl' | 'player'
-  teamName: string
-  avatar: string
+export interface AuthTeam {
+  id: number
+  name: string
+  slug: string
+  owner_id: number
 }
 
+export interface AuthUser {
+  id: number
+  name: string
+  email: string
+  role: 'coach' | 'igl' | 'player'
+  team_id: number | null
+  team?: AuthTeam | null
+}
+
+interface AuthState {
+  user: AuthUser | null
+  token: string | null
+}
+
+const TOKEN_KEY = 'stratbaker_token'
+const USER_KEY = 'stratbaker_user'
+
 export function useAuth() {
-  const state = useState<User | null>('stratbaker-auth', () => null)
+  const state = useState<AuthState>('stratbaker-auth', () => ({ user: null, token: null }))
+  const initialized = useState('stratbaker-auth-initialized', () => false)
 
-  const TOKEN_KEY = 'stratbaker_token'
-  const USER_KEY = 'stratbaker_user'
+  const { get, post } = useApi()
 
-  function loadFromStorage() {
+  function persist(token: string, user: AuthUser) {
     if (import.meta.client) {
-      const token = localStorage.getItem(TOKEN_KEY)
-      const userJson = localStorage.getItem(USER_KEY)
-      if (token && userJson) {
-        try {
-          state.value = JSON.parse(userJson) as User
-        } catch {
-          state.value = null
-        }
-      }
+      localStorage.setItem(TOKEN_KEY, token)
+      localStorage.setItem(USER_KEY, JSON.stringify(user))
     }
+    state.value = { token, user }
   }
 
-  loadFromStorage()
-
-  const token = computed(() => {
-    if (!import.meta.client) return null
-    return localStorage.getItem(TOKEN_KEY)
-  })
-
-  const isAuthenticated = computed(() => state.value !== null)
-
-  const role = computed(() => state.value?.role ?? null)
-
-  const user = computed(() => state.value)
-
-  async function login(email: string, _password: string): Promise<User> {
-    // Mock: determine role from email for demo purposes
-    const mockUser: User = {
-      id: 'u-1',
-      email,
-      pseudo: email.split('@')[0] || 'Coach',
-      role: 'coach',
-      teamName: 'Astralis Academy',
-      avatar: (email.split('@')[0] || 'CO').slice(0, 2).toUpperCase(),
-    }
-
-    const mockToken = 'mock-jwt-' + btoa(email) + '.' + Date.now()
-
-    if (import.meta.client) {
-      localStorage.setItem(TOKEN_KEY, mockToken)
-      localStorage.setItem(USER_KEY, JSON.stringify(mockUser))
-    }
-
-    state.value = mockUser
-    return mockUser
-  }
-
-  function logout() {
+  function clear() {
     if (import.meta.client) {
       localStorage.removeItem(TOKEN_KEY)
       localStorage.removeItem(USER_KEY)
     }
-    state.value = null
+    state.value = { token: null, user: null }
+  }
+
+  async function init() {
+    if (!import.meta.client || initialized.value) return
+    initialized.value = true
+
+    const token = localStorage.getItem(TOKEN_KEY)
+    if (!token) return
+
+    const storedUser = localStorage.getItem(USER_KEY)
+    if (storedUser) {
+      try {
+        state.value = { token, user: JSON.parse(storedUser) as AuthUser }
+      } catch {
+        state.value = { token, user: null }
+      }
+    } else {
+      state.value = { token, user: null }
+    }
+
+    try {
+      const freshUser = await get<AuthUser>('/api/auth/me')
+      persist(token, freshUser)
+    } catch {
+      clear()
+    }
+  }
+
+  async function login(email: string, password: string): Promise<AuthUser> {
+    const response = await post<{ token: string, user: AuthUser }>('/api/auth/login', { email, password })
+    persist(response.token, response.user)
+    return response.user
+  }
+
+  async function logout() {
+    try {
+      await post('/api/auth/logout')
+    } catch {
+      // Backend may already be unreachable or the token already revoked — clear local state regardless.
+    }
+    clear()
     navigateTo('/login')
   }
+
+  const token = computed(() => state.value.token)
+  const user = computed(() => state.value.user)
+  const role = computed(() => state.value.user?.role ?? null)
+  const isAuthenticated = computed(() => !!state.value.token)
 
   return {
     user,
     token,
     role,
     isAuthenticated,
+    init,
     login,
     logout,
   }

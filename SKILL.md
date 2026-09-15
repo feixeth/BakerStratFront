@@ -1,6 +1,6 @@
 # StratBaker — Skill de référence Claude Code
 
-Dernière mise à jour : 2026-09-15 (session backend)
+Dernière mise à jour : 2026-09-15 (session auth end-to-end)
 À mettre à jour après chaque session de travail significative.
 
 ## Concept produit
@@ -31,8 +31,8 @@ BakerStrat/
 │   ├── PageHeader.vue           # titre de page réutilisable + bouton retour
 │   └── TagBadge.vue             # badge tag — composant créé mais NON utilisé actuellement
 ├── composables/
-│   ├── useApi.ts                # wrapper $fetch (GET/POST/PATCH/DELETE) — NON utilisé actuellement
-│   ├── useAuth.ts                # auth mockée (localStorage), rôles coach/igl/player
+│   ├── useApi.ts                # wrapper $fetch (GET/POST/PATCH/DELETE), branché sur le backend Sanctum
+│   ├── useAuth.ts                # auth réelle (Sanctum), state useState + localStorage, rôles coach/igl/player
 │   └── useOffline.ts             # détection online/offline via navigator.onLine
 ├── layouts/default.vue          # layout unique, minimal
 ├── middleware/auth.ts            # garde de route globale (token localStorage)
@@ -60,7 +60,7 @@ Pas de dossier `plugins/`, `stores/` (Pinia) ni `types/` custom — seuls les ty
 | Route | État | Description |
 |---|---|---|
 | `/` (`index.vue`) | scaffold | Redirige selon présence du token vers `/login` ou `/dashboard`, spinner le temps du check |
-| `/login` | fonctionnel (mock) | Formulaire email/password, accepte n'importe quelles valeurs, connecte toujours en tant que Coach |
+| `/login` | fonctionnel (réel) | Formulaire email/password branché sur `POST /api/auth/login`, affiche le message d'erreur du backend (401 "Identifiants incorrects") |
 | `/dashboard` | fonctionnel (mock data) | Grille des 7 maps CS2 avec compteur de strats, statut cache offline |
 | `/team` | fonctionnel (mock data) | Liste des membres, changement de rôle, transfert du rôle Coach, invitations, export/import de bundle `.stratbaker` (JSON) — visible coach uniquement |
 | `/map/[slug]` | fonctionnel (mock data) | Liste des strats d'une map, filtres par tag et par date, lien "New Strat" (bouton présent mais sans action câblée) |
@@ -71,15 +71,15 @@ Pas de dossier `plugins/`, `stores/` (Pinia) ni `types/` custom — seuls les ty
 
 | Composable | Responsabilité |
 |---|---|
-| `useAuth` | État utilisateur (`useState`), login mocké (accepte tout, renvoie toujours le rôle `coach`), logout, persistance token/user dans `localStorage` |
-| `useApi` | Wrapper `$fetch` avec `baseURL` depuis `runtimeConfig.public.apiUrl`, injection du header `Authorization: Bearer`. **Non utilisé nulle part actuellement** — aucune page/composant ne l'importe |
+| `useAuth` | État utilisateur (`useState`, `{ user, token }`), `login`/`logout` réels contre `/api/auth/login`/`/api/auth/logout`, `init()` recharge depuis `localStorage` puis revalide via `/api/auth/me` (idempotent, ne fetch qu'une fois par session via un flag `useState`) |
+| `useApi` | Wrapper `$fetch`, `baseURL` lu depuis `useRuntimeConfig().public.apiUrl` à chaque appel, headers `Authorization: Bearer` + `Accept: application/json`, `credentials: 'include'`. **Utilisé par `useAuth`** (login/logout/me) ; sur un 401 il vide le `localStorage` et redirige vers `/login` via `useRouter()` |
 | `useOffline` | État online/offline via `navigator.onLine` + écouteurs `online`/`offline`, horodatage de dernière sync |
 
 ## État des fonctionnalités
 
 | Feature | État | Notes |
 |---|---|---|
-| Auth (login/register) | Mock uniquement | `useAuth.login()` accepte n'importe quel email/password et renvoie toujours un utilisateur Coach fictif. Pas de register. Aucun appel à un backend réel. |
+| Auth (login/register) | Fonctionnelle (Sanctum) | `/login` branché sur le vrai backend (`AuthController::login`), token Sanctum stocké et envoyé en Bearer. Register implémenté côté backend (`POST /api/auth/register`, role `player` forcé) mais **aucune page `register.vue` côté frontend** — testé uniquement via curl pour l'instant. |
 | Gestion équipes | Scaffold avancé (mock data) | UI complète (invite, changement de rôle, transfert coach) mais toutes les actions ne modifient que l'état local en mémoire, rien n'est persisté ni envoyé à une API |
 | Strats (CRUD) | Lecture + édition UI seules | Lecture fonctionnelle sur données mockées (`utils/mockData.ts`). L'éditeur (`edit.vue`) permet d'ajouter/réordonner/supprimer des sections mais ne sauvegarde nulle part (juste un indicateur "Saving..." simulé) |
 | Versioning | Affichage seul | Un champ `version` existe sur chaque strat et s'affiche (`v3`, `v4`...), mais rien n'incrémente ni n'historise réellement une nouvelle version |
@@ -98,9 +98,17 @@ Pas de dossier `plugins/`, `stores/` (Pinia) ni `types/` custom — seuls les ty
   - `POST /api/auth/register`, `POST /api/auth/login`, `POST /api/auth/logout` (auth), `GET /api/auth/me` (auth)
   - `GET|PUT /api/team`, `POST /api/team/invite`, `GET /api/team/members`, `DELETE /api/team/members/{user}`, `GET /api/team/export`, `POST /api/team/import` (toutes auth)
   - `GET/POST /api/strats`, `GET/PUT/DELETE /api/strats/{strat}`, `GET /api/strats/{strat}/versions` (toutes auth)
-- **Tous les controllers ne sont que des stubs** (`AuthController`, `TeamController`, `StratController`) : chaque méthode renvoie `501 Not implemented`. Aucune logique métier réelle n'existe encore côté backend — c'est la prochaine étape avant de pouvoir brancher `useApi.ts`.
+- **`AuthController` est implémenté et testé end-to-end** (register/login/logout/me) — voir détail ci-dessous. `TeamController` et `StratController` restent des stubs `501 Not implemented`.
 - Connexion testée et fonctionnelle : `php artisan serve --port=8000` + `GET /api/auth/me` sans token renvoie bien `401 {"message":"Unauthenticated."}`.
 - `NUXT_PUBLIC_API_URL` (frontend) doit pointer vers `http://localhost:8000` pour matcher `APP_URL` du backend — déjà la valeur par défaut de `nuxt.config.ts`, aucun changement requis côté frontend pour l'instant.
+
+### AuthController (implémenté, testé via curl)
+
+- `POST /api/auth/register` — valide `name`/`email` (unique)/`password` (min 8, confirmed), crée le user avec **`role` forcé à `player`** (pas de choix de rôle à l'inscription), retourne `201` + `{ token, user }`.
+- `POST /api/auth/login` — `Auth::attempt()` (fonctionne tel quel malgré l'absence de middleware `web`/session sur les routes API — vérifié empiriquement, pas de crash), révoque tous les anciens tokens du user (`$user->tokens()->delete()`) puis en émet un nouveau. Retourne `401 {"message":"Identifiants incorrects"}` si échec.
+- `POST /api/auth/logout` (auth) — révoque uniquement le token courant (`currentAccessToken()->delete()`), `204 No Content`.
+- `GET /api/auth/me` (auth) — retourne `{ id, name, email, role, team_id }`, plus une clé `team` (objet Team) si `team_id` n'est pas `null`.
+- Format de réponse uniforme `{ token, user: { id, name, email, role, team_id } }` pour register/login.
 
 ## Design tokens
 
@@ -117,32 +125,36 @@ Effectivement appliqués dans `tailwind.config.js` et `assets/css/main.css`, con
 
 - **2026-09-15** — Suppression du dossier `.bolt/` (config StackBlitz/Bolt.new résiduelle), aucune autre trace Bolt trouvée dans le code. Voir [CLEANUP.md](CLEANUP.md).
 - **2026-09-15** — Repo Laravel 13 créé dans `BakerStrat/BakerStratBack` (monorepo). Auth via Sanctum en mode tokens Bearer (pas de cookies SPA stateful), MySQL/MAMP en local sur le port `8889`. Schéma DB, models et routes API définis ; controllers laissés en stubs `501` volontairement, à implémenter dans une prochaine session.
+- **2026-09-15** — Auth end-to-end implémentée et testée (register/login/logout/me via curl, cf. section Backend). `useAuth`/`useApi` réécrits pour consommer le vrai backend ; `middleware/auth.ts` appelle `useAuth().init()` (revalidation `/api/auth/me` au premier chargement, une seule fois par session grâce à un flag `useState`) avant de vérifier le token. Register forcé à `role: 'player'` côté backend — aucun choix de rôle à l'inscription pour l'instant, une page `register.vue` reste à créer côté frontend.
 
 ## Problèmes connus / dettes techniques
 
-- **Aucune connexion backend réelle** : toute l'app fonctionne sur `utils/mockData.ts` + `localStorage`. `useApi` est écrit mais mort (jamais importé).
-- **Auth entièrement mockée** : `login()` accepte n'importe quel couple email/password et force toujours le rôle `coach` — il n'y a aucune distinction de rôle réelle à la connexion, ni de register.
+- **Auth branchée, le reste non** : seuls `useAuth`/`useApi` (login/logout/me) parlent au vrai backend. Team management, strats, versioning restent sur `utils/mockData.ts` + `localStorage` — `TeamController`/`StratController` sont encore des stubs `501`.
+- **Pas de page register côté frontend** : le endpoint `POST /api/auth/register` existe et fonctionne (testé via curl) mais rien dans l'UI ne l'appelle. De plus il force toujours `role: 'player'` — il n'y a aujourd'hui aucun moyen de créer un Coach autrement qu'en modifiant la base manuellement (ex. `php artisan tinker`).
+- **Mismatch de forme entre le vrai `User` (backend) et l'UI existante** : `AppHeader.vue`, `team.vue`, etc. attendent encore les champs mock `pseudo`, `avatar`, `teamName` (string ids) sur l'objet user, alors que le `User` réel renvoyé par l'API a `name` (pas `pseudo`), pas d'`avatar`/`teamName`, et un `id` numérique. Ces composants n'ont pas été mis à jour dans cette session (hors scope) et afficheront des valeurs `undefined` une fois connectés en vrai.
 - **Éditeur de strat non persistant** : `edit.vue` simule une sauvegarde (`setTimeout`) sans jamais écrire les changements où que ce soit (pas même dans `mockData.ts` en mémoire partagée) ; recharger la page perd les modifications.
 - **Composant `TagBadge.vue` mort** : créé mais jamais importé/utilisé (les pages utilisent des `<span class="badge">` inline à la place).
 - **Pas de Nuxt 4** : le plan initial visait Nuxt 4, le projet est sur Nuxt 3.13. À trancher : migrer ou mettre à jour la doc/plan.
 - **Pas de `.env.example`** : `NUXT_PUBLIC_API_URL` n'est documentée nulle part pour un nouveau développeur.
 - **Versioning cosmétique uniquement** : le champ `version` s'affiche mais rien ne l'incrémente ni ne conserve d'historique.
 - **Bundle `.stratbaker`** limité à l'équipe ; pas de bundle pour les strats malgré le nom du fichier généré.
-- **Pas de gestion d'erreur réseau** : `useApi` ne gère aucun cas d'échec (pas de retry, pas de toast d'erreur) — logique, vu qu'il n'est pas encore branché.
+- **Gestion d'erreur réseau minimale** : `useApi` ne gère que le cas 401 (purge + redirect `/login`) ; pas de retry, pas de toast d'erreur générique, pas de gestion des 422 (erreurs de validation) au-delà de `err?.data?.message` affiché brut dans `login.vue`.
 
 ## Prochaines étapes
 
-1. Implémenter la logique réelle des controllers Laravel (`AuthController`, `TeamController`, `StratController`) — actuellement des stubs `501`. Priorité : `register`/`login` (émission de token Sanctum) pour pouvoir enfin brancher `useApi.ts` et `useAuth.ts` sur le vrai backend.
-2. Remplacer l'auth mock du frontend par un vrai flux (login + register) contre `http://localhost:8000/api/auth/*`, en conservant la distinction de rôles Coach/IGL/Player renvoyée par l'API (colonne `role` déjà en base).
-3. Rendre l'éditeur de strat persistant : appeler `PUT /api/strats/{strat}` (déjà routé côté backend) au lieu de la simulation `setTimeout`, et écrire dans `strat_versions` à chaque publication pour un vrai historique.
-4. Câbler `/team` sur les endpoints `GET/PUT /api/team`, `POST /api/team/invite`, `GET /api/team/members` une fois les controllers implémentés, en gardant `role` (coach uniquement) côté backend en plus du contrôle frontend actuel.
-5. Décider Nuxt 3 (rester) vs migration Nuxt 4, et documenter la décision ici une fois tranchée.
-6. Étendre le bundle `.stratbaker` aux strats elles-mêmes (pas seulement à l'équipe, cf. `/api/team/export`+`/api/team/import` déjà routés côté backend), et évaluer l'export PDF/PNG (feature actuellement absente).
+1. **Implémenter `TeamController`** (`show`, `update`, `invite`, `members`, `destroyMember`, `export`, `import`) — c'est le prochain bloc backend à sortir des stubs `501`, pour pouvoir remplacer `utils/mockData.ts` sur `/team`.
+2. Câbler `/team` (frontend) sur les endpoints `GET/PUT /api/team`, `POST /api/team/invite`, `GET /api/team/members` une fois `TeamController` implémenté, en gardant `role` (coach uniquement) vérifié côté backend en plus du contrôle frontend actuel.
+3. Résoudre le mismatch de forme `User` (voir Problèmes connus) : adapter `AppHeader.vue`/`team.vue`/etc. aux champs réels (`name` au lieu de `pseudo`, pas d'`avatar`/`teamName` natifs) avant de les brancher sur le vrai backend.
+4. Implémenter `StratController` et rendre l'éditeur de strat persistant : appeler `PUT /api/strats/{strat}` (déjà routé côté backend) au lieu de la simulation `setTimeout`, et écrire dans `strat_versions` à chaque publication pour un vrai historique.
+5. Ajouter une page `register.vue` côté frontend pour exposer `POST /api/auth/register` (actuellement testé uniquement via curl) — et décider si/comment un Coach peut être créé (le register force `role: 'player'`).
+6. Décider Nuxt 3 (rester) vs migration Nuxt 4, et documenter la décision ici une fois tranchée.
+7. Étendre le bundle `.stratbaker` aux strats elles-mêmes (pas seulement à l'équipe, cf. `/api/team/export`+`/api/team/import` déjà routés côté backend), et évaluer l'export PDF/PNG (feature actuellement absente).
 
 ## Pièges à éviter
 
-- Ne pas supposer que `useApi` est branché quelque part — grep confirme qu'il n'est importé par aucun fichier à ce jour ; toute nouvelle feature réseau doit explicitement l'utiliser.
+- `useApi`/`useAuth` sont maintenant réellement branchés sur le backend — ne pas réintroduire de mock dedans. Pour tester un rôle autre que `player` (Coach/IGL), il faut changer `role` en base (ex. `php artisan tinker --execute 'User::where("email","...")->update(["role"=>"coach"]);'`), le register force toujours `player`.
 - Ne pas dupliquer `TagBadge.vue` : le composant existe déjà mais n'est pas câblé ; vérifier avant de recréer un badge similaire.
-- Ne pas confondre l'auth "fonctionnelle" en apparence avec une vraie auth : toute action UI multi-rôle testée manuellement affichera un Coach codé en dur (`useAuth.login`), donc pour tester les vues IGL/Player il faut modifier manuellement `localStorage.stratbaker_user` ou le code du composable.
+- Ne pas supposer que l'objet `user` a les champs `pseudo`/`avatar`/`teamName` : c'était vrai avec le mock, plus avec le vrai backend (voir Problèmes connus). Vérifier `AuthUser` dans `useAuth.ts` avant d'utiliser un champ user.
+- `Auth::attempt()` fonctionne côté backend malgré l'absence du middleware `web`/session sur les routes API (vérifié empiriquement) — ne pas le remplacer par `Auth::once()` sans raison, ça a été testé et ça marche tel quel.
 - Le design (couleurs, layout) est déjà conforme au plan (`#0f1117` / `#00ff88`) — ne pas re-proposer une refonte de palette sans raison.
 - Pas de Pinia dans ce projet : utiliser `useState` (pattern déjà en place dans `useAuth`/`useOffline`) plutôt que d'introduire une nouvelle dépendance de state management.
