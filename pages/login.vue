@@ -19,12 +19,10 @@ async function handleSubmit() {
   loading.value = true
 
   try {
-    // Mock: any email/password logs in successfully
-    await new Promise((r) => setTimeout(r, 400))
     await login(email.value, password.value)
     navigateTo('/dashboard')
-  } catch {
-    error.value = 'Login failed. Please try again.'
+  } catch (err: any) {
+    error.value = err?.data?.message || 'Login failed. Please try again.'
   } finally {
     loading.value = false
   }
@@ -91,7 +89,7 @@ async function handleSubmit() {
         </form>
 
         <div class="mt-6 pt-6 border-t border-border text-center">
-          <p class="text-xs text-muted">Demo mode — any email and password will log you in as Coach.</p>
+          <p class="text-xs text-muted">Connected to the StratBaker API — sign in with your team account.</p>
         </div>
       </div>
     </div>

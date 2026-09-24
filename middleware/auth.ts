@@ -1,5 +1,7 @@
-export default defineNuxtRouteMiddleware((to) => {
+export default defineNuxtRouteMiddleware(async (to) => {
   if (!import.meta.client) return
+
+  await useAuth().init()
 
   const token = localStorage.getItem('stratbaker_token')
 

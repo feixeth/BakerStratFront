@@ -2,6 +2,8 @@
 const { user, role, logout } = useAuth()
 const { isOnline } = useOffline()
 
+const initials = computed(() => (user.value?.name ?? '').trim().slice(0, 2).toUpperCase())
+
 const roleLabel = computed(() => {
   const r = role.value
   if (!r) return ''
@@ -26,8 +28,8 @@ const roleBadgeClass = computed(() => {
           </div>
           <span class="text-lg font-bold text-gray-100 hidden sm:block">StratBaker</span>
         </NuxtLink>
-        <div v-if="user" class="hidden md:flex items-center gap-2 ml-2 pl-3 border-l border-border">
-          <span class="text-sm text-muted-light">{{ user.teamName }}</span>
+        <div v-if="user?.team" class="hidden md:flex items-center gap-2 ml-2 pl-3 border-l border-border">
+          <span class="text-sm text-muted-light">{{ user.team?.name }}</span>
         </div>
       </div>
 
@@ -40,7 +42,7 @@ const roleBadgeClass = computed(() => {
         <span class="badge" :class="roleBadgeClass">{{ roleLabel }}</span>
 
         <div class="w-9 h-9 rounded-full bg-bg-lighter border border-border flex items-center justify-center text-sm font-semibold text-accent">
-          {{ user.avatar }}
+          {{ initials }}
         </div>
 
         <button class="btn btn-ghost !px-2.5" title="Logout" @click="logout">
