@@ -51,7 +51,7 @@ function changeRole(memberId: string, newRole: 'igl' | 'player') {
 }
 
 function canChangeRole(member: TeamMember): boolean {
-  return member.id !== user.value?.id && member.role !== 'coach'
+  return member.email !== user.value?.email && member.role !== 'coach'
 }
 
 function openTransferModal(memberId: string) {
@@ -61,7 +61,7 @@ function openTransferModal(memberId: string) {
 
 function confirmTransfer() {
   const target = members.value.find((m) => m.id === transferTarget.value)
-  const me = members.value.find((m) => m.id === user.value?.id)
+  const me = members.value.find((m) => m.email === user.value?.email)
   if (target && me) {
     target.role = 'coach'
     me.role = 'player'
@@ -183,7 +183,7 @@ function importBundle(event: Event) {
               <div class="min-w-0">
                 <div class="flex items-center gap-2">
                   <span class="font-semibold text-gray-100 truncate">{{ member.pseudo }}</span>
-                  <span v-if="member.id === user?.id" class="text-xs text-muted">(You)</span>
+                  <span v-if="member.email === user?.email" class="text-xs text-muted">(You)</span>
                 </div>
                 <p class="text-sm text-muted truncate">{{ member.email }}</p>
                 <p class="text-xs text-muted mt-0.5 sm:hidden">Joined {{ member.joinDate }}</p>

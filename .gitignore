@@ -1,1 +1,10 @@
 /CLEANUP.md
+node_modules
+*.log*
+.nuxt
+.nitro
+.cache
+.output
+.data
+.env
+dist

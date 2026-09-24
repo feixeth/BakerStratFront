@@ -1,6 +1,6 @@
 # StratBaker — Skill de référence Claude Code
 
-Dernière mise à jour : 2026-09-15 (session auth end-to-end)
+Dernière mise à jour : 2026-09-24 (alignement UI sur le vrai User)
 À mettre à jour après chaque session de travail significative.
 
 ## Concept produit
@@ -131,7 +131,7 @@ Effectivement appliqués dans `tailwind.config.js` et `assets/css/main.css`, con
 
 - **Auth branchée, le reste non** : seuls `useAuth`/`useApi` (login/logout/me) parlent au vrai backend. Team management, strats, versioning restent sur `utils/mockData.ts` + `localStorage` — `TeamController`/`StratController` sont encore des stubs `501`.
 - **Pas de page register côté frontend** : le endpoint `POST /api/auth/register` existe et fonctionne (testé via curl) mais rien dans l'UI ne l'appelle. De plus il force toujours `role: 'player'` — il n'y a aujourd'hui aucun moyen de créer un Coach autrement qu'en modifiant la base manuellement (ex. `php artisan tinker`).
-- **Mismatch de forme entre le vrai `User` (backend) et l'UI existante** : `AppHeader.vue`, `team.vue`, etc. attendent encore les champs mock `pseudo`, `avatar`, `teamName` (string ids) sur l'objet user, alors que le `User` réel renvoyé par l'API a `name` (pas `pseudo`), pas d'`avatar`/`teamName`, et un `id` numérique. Ces composants n'ont pas été mis à jour dans cette session (hors scope) et afficheront des valeurs `undefined` une fois connectés en vrai.
+- **`team.vue` toujours sur mock data** : l'identité du user courant y est comparée par `email` (les ids mock `'u-1'` ne matchent pas les ids numériques du backend) ; `AppHeader.vue` utilise `user.team?.name` et les initiales de `user.name`. `TeamMember.pseudo` reste le champ mock des membres, à remplacer quand `TeamController` sera implémenté.
 - **Éditeur de strat non persistant** : `edit.vue` simule une sauvegarde (`setTimeout`) sans jamais écrire les changements où que ce soit (pas même dans `mockData.ts` en mémoire partagée) ; recharger la page perd les modifications.
 - **Composant `TagBadge.vue` mort** : créé mais jamais importé/utilisé (les pages utilisent des `<span class="badge">` inline à la place).
 - **Pas de Nuxt 4** : le plan initial visait Nuxt 4, le projet est sur Nuxt 3.13. À trancher : migrer ou mettre à jour la doc/plan.
@@ -144,17 +144,17 @@ Effectivement appliqués dans `tailwind.config.js` et `assets/css/main.css`, con
 
 1. **Implémenter `TeamController`** (`show`, `update`, `invite`, `members`, `destroyMember`, `export`, `import`) — c'est le prochain bloc backend à sortir des stubs `501`, pour pouvoir remplacer `utils/mockData.ts` sur `/team`.
 2. Câbler `/team` (frontend) sur les endpoints `GET/PUT /api/team`, `POST /api/team/invite`, `GET /api/team/members` une fois `TeamController` implémenté, en gardant `role` (coach uniquement) vérifié côté backend en plus du contrôle frontend actuel.
-3. Résoudre le mismatch de forme `User` (voir Problèmes connus) : adapter `AppHeader.vue`/`team.vue`/etc. aux champs réels (`name` au lieu de `pseudo`, pas d'`avatar`/`teamName` natifs) avant de les brancher sur le vrai backend.
-4. Implémenter `StratController` et rendre l'éditeur de strat persistant : appeler `PUT /api/strats/{strat}` (déjà routé côté backend) au lieu de la simulation `setTimeout`, et écrire dans `strat_versions` à chaque publication pour un vrai historique.
-5. Ajouter une page `register.vue` côté frontend pour exposer `POST /api/auth/register` (actuellement testé uniquement via curl) — et décider si/comment un Coach peut être créé (le register force `role: 'player'`).
-6. Décider Nuxt 3 (rester) vs migration Nuxt 4, et documenter la décision ici une fois tranchée.
-7. Étendre le bundle `.stratbaker` aux strats elles-mêmes (pas seulement à l'équipe, cf. `/api/team/export`+`/api/team/import` déjà routés côté backend), et évaluer l'export PDF/PNG (feature actuellement absente).
+3. Implémenter `StratController` et rendre l'éditeur de strat persistant : appeler `PUT /api/strats/{strat}` (déjà routé côté backend) au lieu de la simulation `setTimeout`, et écrire dans `strat_versions` à chaque publication pour un vrai historique.
+4. Ajouter une page `register.vue` côté frontend pour exposer `POST /api/auth/register` (actuellement testé uniquement via curl) — et décider si/comment un Coach peut être créé (le register force `role: 'player'`).
+5. Décider Nuxt 3 (rester) vs migration Nuxt 4, et documenter la décision ici une fois tranchée.
+6. Étendre le bundle `.stratbaker` aux strats elles-mêmes (pas seulement à l'équipe, cf. `/api/team/export`+`/api/team/import` déjà routés côté backend), et évaluer l'export PDF/PNG (feature actuellement absente).
 
 ## Pièges à éviter
 
 - `useApi`/`useAuth` sont maintenant réellement branchés sur le backend — ne pas réintroduire de mock dedans. Pour tester un rôle autre que `player` (Coach/IGL), il faut changer `role` en base (ex. `php artisan tinker --execute 'User::where("email","...")->update(["role"=>"coach"]);'`), le register force toujours `player`.
 - Ne pas dupliquer `TagBadge.vue` : le composant existe déjà mais n'est pas câblé ; vérifier avant de recréer un badge similaire.
-- Ne pas supposer que l'objet `user` a les champs `pseudo`/`avatar`/`teamName` : c'était vrai avec le mock, plus avec le vrai backend (voir Problèmes connus). Vérifier `AuthUser` dans `useAuth.ts` avant d'utiliser un champ user.
+- Ne pas supposer que l'objet `user` a les champs `pseudo`/`avatar`/`teamName` : c'était le mock. Le vrai `AuthUser` (`useAuth.ts`) a `id` (number), `name`, `email`, `role`, `team_id`, `team?`. Le header dérive les initiales de `name`.
+- Node local = 22.10 : `nuxt dev` exige `NODE_OPTIONS=--experimental-require-module` et le lockfile (généré sur une autre plateforme) manque les bindings natifs darwin-arm64 (`@oxc-parser`, `@oxc-transform`, `@oxc-minify` à installer avec `npm i --no-save`). Mettre Node à jour (>=22.12) règle le premier point.
 - `Auth::attempt()` fonctionne côté backend malgré l'absence du middleware `web`/session sur les routes API (vérifié empiriquement) — ne pas le remplacer par `Auth::once()` sans raison, ça a été testé et ça marche tel quel.
 - Le design (couleurs, layout) est déjà conforme au plan (`#0f1117` / `#00ff88`) — ne pas re-proposer une refonte de palette sans raison.
 - Pas de Pinia dans ce projet : utiliser `useState` (pattern déjà en place dans `useAuth`/`useOffline`) plutôt que d'introduire une nouvelle dépendance de state management.
